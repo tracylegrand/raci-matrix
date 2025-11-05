@@ -86,6 +86,191 @@ def validate_raci_matrix(df):
             errors.append(f"Function '{function}' has {accountable_count} Accountable stakeholders. Only 1 is allowed.")
     return errors
 
+def parse_raci_value(value):
+    """Parse RACI value from imported file - handles both formats"""
+    if pd.isna(value) or value == '':
+        return ''
+    
+    val_str = str(value).strip().upper()
+    
+    # If it's just a single letter, return it
+    if len(val_str) == 1 and val_str in ['R', 'A', 'C', 'I']:
+        return RACI_LABELS.get(val_str, val_str)
+    
+    # If it starts with a RACI letter, extract it
+    if val_str and val_str[0] in ['R', 'A', 'C', 'I']:
+        letter = val_str[0]
+        return RACI_LABELS.get(letter, letter)
+    
+    # Try to match full labels
+    val_lower = val_str.lower()
+    if 'responsible' in val_lower:
+        return RACI_LABELS['R']
+    elif 'accountable' in val_lower:
+        return RACI_LABELS['A']
+    elif 'consulted' in val_lower:
+        return RACI_LABELS['C']
+    elif 'informed' in val_lower:
+        return RACI_LABELS['I']
+    
+    return ''
+
+def import_from_spreadsheet(uploaded_file):
+    """Import RACI matrix from Excel or CSV file"""
+    try:
+        # Reset file pointer to beginning
+        uploaded_file.seek(0)
+        
+        # Determine file type and read accordingly
+        if uploaded_file.name.endswith('.csv'):
+            df = pd.read_csv(uploaded_file, index_col=0)
+        elif uploaded_file.name.endswith(('.xlsx', '.xls')):
+            # Try to read the first sheet
+            uploaded_file.seek(0)  # Reset again for Excel
+            df = pd.read_excel(uploaded_file, index_col=0, sheet_name=0)
+        else:
+            return False, "Unsupported file format. Please use Excel (.xlsx, .xls) or CSV (.csv) files."
+        
+        # Check if DataFrame is empty
+        if df.empty:
+            return False, "The uploaded file appears to be empty."
+        
+        # Drop rows where the index is NaN or empty
+        df = df[df.index.notna()]
+        df = df[df.index.astype(str).str.strip() != '']
+        
+        # Filter out legend rows and unnamed rows
+        # Legend rows typically have index starting with "Legend" or contain "=" or are in common legend formats
+        legend_patterns = ['legend', 'r =', 'a =', 'c =', 'i =', 'responsible', 'accountable', 'consulted', 'informed']
+        
+        def is_legend_row(idx):
+            """Check if a row index looks like a legend row"""
+            idx_str = str(idx).strip().lower()
+            # Check if index contains legend patterns
+            if any(pattern in idx_str for pattern in legend_patterns):
+                return True
+            # Check if index contains "=" (common in legends like "R = Responsible")
+            if '=' in idx_str:
+                return True
+            return False
+        
+        def is_unnamed_row(idx):
+            """Check if a row index is an unnamed/empty row"""
+            idx_str = str(idx).strip()
+            # Check for "Unnamed" pattern (case-insensitive) - handles "Unnamed: 3", "Unnamed: 4", etc.
+            if 'unnamed' in idx_str.lower():
+                return True
+            # Check for empty or NaN values
+            if not idx_str or idx_str.lower() in ['nan', 'none', '']:
+                return True
+            return False
+        
+        # Filter out legend rows and unnamed rows from the DataFrame
+        df_filtered = df[~df.index.map(lambda idx: is_legend_row(idx) or is_unnamed_row(idx))]
+        
+        # Also check if row has mostly empty cells or legend-like content in cells
+        # (Sometimes legend is in a row with mixed content)
+        def row_looks_like_legend(row):
+            """Check if a row looks like a legend row based on cell content"""
+            row_str = ' '.join([str(val).strip().lower() for val in row.values if pd.notna(val)])
+            # If row contains legend patterns, it's likely a legend
+            if any(pattern in row_str for pattern in ['r =', 'a =', 'c =', 'i =', 'responsible', 'accountable', 'consulted', 'informed']):
+                return True
+            return False
+        
+        def row_is_empty_or_unnamed(row, row_idx):
+            """Check if a row is mostly empty or has no meaningful data"""
+            # First check if the index itself is unnamed
+            if is_unnamed_row(row_idx):
+                return True
+            
+            # Count non-empty, non-NaN values
+            non_empty_values = [val for val in row.values if pd.notna(val) and str(val).strip() != '']
+            non_empty_count = len(non_empty_values)
+            
+            # If row has no non-empty values, it's empty
+            if non_empty_count == 0:
+                return True
+            
+            # Check if all values in the row are empty strings or NaN
+            all_empty = all(pd.isna(val) or str(val).strip() == '' for val in row.values)
+            if all_empty:
+                return True
+            
+            # Check if the row index is empty/NaN but row has some data (might be a data row)
+            # But if index is unnamed and row has minimal data, it's likely still an unwanted row
+            idx_str = str(row_idx).strip()
+            if 'unnamed' in idx_str.lower() and non_empty_count <= 1:
+                return True
+            
+            return False
+        
+        # Additional filter: remove rows that look like legends or are empty/unnamed
+        mask = ~df_filtered.apply(lambda row: row_looks_like_legend(row) or row_is_empty_or_unnamed(row, row.name), axis=1)
+        df_filtered = df_filtered[mask]
+        
+        if df_filtered.empty:
+            return False, "No valid data rows found after filtering legend. Please ensure your file contains function names in the first column."
+        
+        # Extract functions from index (first column) - now filtered
+        functions = [str(idx).strip() for idx in df_filtered.index if str(idx).strip() and str(idx).strip().lower() not in ['nan', 'none', '']]
+        
+        # Extract stakeholders from column headers - filter out blank/empty/unnamed columns
+        def is_valid_stakeholder(col):
+            """Check if a column header is a valid stakeholder name"""
+            col_str = str(col).strip()
+            # Check for empty or NaN
+            if not col_str or col_str.lower() in ['nan', 'none', '']:
+                return False
+            # Check for "Unnamed" pattern
+            if 'unnamed' in col_str.lower():
+                return False
+            return True
+        
+        # Filter columns by header name (removes blank/unnamed columns)
+        valid_cols = [col for col in df_filtered.columns if is_valid_stakeholder(col)]
+        df_filtered = df_filtered[valid_cols]
+        
+        # Also filter out columns that are completely empty (all NaN or empty values)
+        # This catches columns with valid headers but no data
+        cols_with_data = []
+        for col in df_filtered.columns:
+            col_data = df_filtered[col]
+            # Check if column has any non-empty, non-NaN values
+            has_values = any(pd.notna(val) and str(val).strip() != '' for val in col_data.values)
+            if has_values:
+                cols_with_data.append(col)
+        
+        # Use columns with data (or at least valid headers)
+        df_filtered = df_filtered[cols_with_data] if cols_with_data else df_filtered[valid_cols]
+        
+        # Extract stakeholders from remaining valid columns
+        stakeholders = [str(col).strip() for col in df_filtered.columns if is_valid_stakeholder(col)]
+        
+        if not functions:
+            return False, "No functions found in the file. Please ensure the first column contains function names."
+        
+        if not stakeholders:
+            return False, "No stakeholders found in the file. Please ensure the first row contains stakeholder names."
+        
+        # Parse RACI values - convert to full label format
+        raci_df = df_filtered.copy()
+        for col in raci_df.columns:
+            for idx in raci_df.index:
+                original_value = raci_df.loc[idx, col]
+                parsed_value = parse_raci_value(original_value)
+                raci_df.loc[idx, col] = parsed_value
+        
+        # Update session state
+        st.session_state.functions = functions
+        st.session_state.stakeholders = stakeholders
+        st.session_state.raci_data = raci_df.fillna('')
+        
+        return True, f"Successfully imported {len(functions)} functions and {len(stakeholders)} stakeholders!"
+        
+    except Exception as e:
+        return False, f"Error importing file: {str(e)}"
+
 def export_to_excel(df, filename='raci_matrix.xlsx'):
     """Export RACI matrix to Excel with formatting"""
     if df.empty:
@@ -340,7 +525,7 @@ def export_to_powerpoint(df, filename='raci_matrix.pptx'):
 st.set_page_config(page_title="RACI Matrix Builder", page_icon="📊", layout="wide")
 
 # Version and author info
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 # Custom CSS for version and author display in upper right
 st.markdown(f"""
@@ -457,23 +642,59 @@ st.markdown("""
     </script>
 """, unsafe_allow_html=True)
 
+# Custom CSS to reduce header spacing
+st.markdown("""
+    <style>
+    .stTitle {
+        margin-bottom: 0.5rem !important;
+        padding-bottom: 0 !important;
+    }
+    h1 {
+        margin-bottom: 0.25rem !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 # Title and version row
 col_title, col_version = st.columns([3, 1])
 with col_title:
     st.title("📊 Interactive RACI Matrix Builder")
 with col_version:
-    st.markdown(f"<div style='text-align: right; padding-top: 1rem; color: #666; font-size: 12px;'><strong>v{VERSION}</strong> | By: TDLG</div>", unsafe_allow_html=True)
+    st.markdown(f"<div style='text-align: right; padding-top: 0.5rem; color: #666; font-size: 12px; margin-bottom: 0;'><strong>v{VERSION}</strong> | By: TDLG</div>", unsafe_allow_html=True)
 
-st.markdown("Build and manage your RACI (Responsible, Accountable, Consulted, Informed) matrix interactively.")
+st.markdown("Build and manage your RACI (Responsible, Accountable, Consulted, Informed) matrix interactively. [Learn more about RACI](https://en.wikipedia.org/wiki/Responsibility_assignment_matrix)")
 
-# Sidebar for configuration
-with st.sidebar:
-    st.header("Configuration")
+# Top section: Import and Input fields
+st.divider()
+st.subheader("Setup & Configuration")
+
+# Create three columns for import and input fields
+col_import, col_function, col_stakeholder = st.columns(3)
+
+# Import from spreadsheet - Left column
+with col_import:
+    st.markdown("**📥 Import from Spreadsheet**")
+    uploaded_file = st.file_uploader(
+        "Upload Excel or CSV",
+        type=['xlsx', 'xls', 'csv'],
+        help="Upload a spreadsheet with functions in the first column and stakeholders as column headers. RACI values (R, A, C, I) should be in the matrix cells.",
+        label_visibility="collapsed"
+    )
     
-    # Add functions
-    st.subheader("Functions (Rows)")
+    if uploaded_file is not None:
+        if st.button("🔄 Import Data", use_container_width=True, type="primary"):
+            success, message = import_from_spreadsheet(uploaded_file)
+            if success:
+                st.success(message)
+                st.rerun()
+            else:
+                st.error(message)
+
+# Add functions - Middle column
+with col_function:
+    st.markdown("**➕ Add Function (Row)**")
     with st.form("add_function_form", clear_on_submit=False):
-        new_function = st.text_input("Add new function", key=f"function_input_{st.session_state.function_input_key}")
+        new_function = st.text_input("Add new function", key=f"function_input_{st.session_state.function_input_key}", label_visibility="collapsed")
         submitted_func = st.form_submit_button("➕ Add Function", use_container_width=True)
         if submitted_func:
             # Capture value
@@ -490,60 +711,12 @@ with st.sidebar:
                     st.warning("Function already exists!")
             else:
                 st.warning("Please enter a function name.")
-    
-    # JavaScript to refocus input after form submission
-    if st.session_state.refocus_function:
-        st.session_state.refocus_function = False
-        st.markdown("""
-            <script>
-            function refocusFunctionInput() {
-                var inputs = document.querySelectorAll('input[type="text"]');
-                for (var i = 0; i < inputs.length; i++) {
-                    var input = inputs[i];
-                    var label = input.closest('div')?.querySelector('label');
-                    if (label && (label.textContent.includes('function') || 
-                        input.placeholder?.toLowerCase().includes('function'))) {
-                        setTimeout(function() {
-                            input.focus();
-                            input.select();
-                        }, 50);
-                        return;
-                    }
-                }
-                // Fallback: find by placeholder
-                setTimeout(function() {
-                    var allInputs = document.querySelectorAll('input[type="text"]');
-                    for (var j = 0; j < allInputs.length; j++) {
-                        if (allInputs[j].placeholder && allInputs[j].placeholder.toLowerCase().includes('function')) {
-                            allInputs[j].focus();
-                            allInputs[j].select();
-                            break;
-                        }
-                    }
-                }, 100);
-            }
-            refocusFunctionInput();
-            </script>
-        """, unsafe_allow_html=True)
-    
-    # Display and remove functions
-    if st.session_state.functions:
-        st.write("**Current Functions:**")
-        for idx, func in enumerate(st.session_state.functions):
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                st.write(f"{idx + 1}. {func}")
-            with col2:
-                if st.button("🗑️", key=f"del_func_{idx}"):
-                    st.session_state.functions.pop(idx)
-                    st.rerun()
-    
-    st.divider()
-    
-    # Add stakeholders
-    st.subheader("Stakeholders (Columns)")
+
+# Add stakeholders - Right column
+with col_stakeholder:
+    st.markdown("**➕ Add Stakeholder (Column)**")
     with st.form("add_stakeholder_form", clear_on_submit=False):
-        new_stakeholder = st.text_input("Add new stakeholder", key=f"stakeholder_input_{st.session_state.stakeholder_input_key}")
+        new_stakeholder = st.text_input("Add new stakeholder", key=f"stakeholder_input_{st.session_state.stakeholder_input_key}", label_visibility="collapsed")
         submitted_stake = st.form_submit_button("➕ Add Stakeholder", use_container_width=True)
         if submitted_stake:
             # Capture value
@@ -560,64 +733,120 @@ with st.sidebar:
                     st.warning("Stakeholder already exists!")
             else:
                 st.warning("Please enter a stakeholder name.")
-    
-    # JavaScript to refocus input after form submission
-    if st.session_state.refocus_stakeholder:
-        st.session_state.refocus_stakeholder = False
-        st.markdown("""
-            <script>
-            function refocusStakeholderInput() {
-                var inputs = document.querySelectorAll('input[type="text"]');
-                for (var i = 0; i < inputs.length; i++) {
-                    var input = inputs[i];
-                    var label = input.closest('div')?.querySelector('label');
-                    if (label && (label.textContent.includes('stakeholder') || 
-                        input.placeholder?.toLowerCase().includes('stakeholder'))) {
-                        setTimeout(function() {
-                            input.focus();
-                            input.select();
-                        }, 50);
-                        return;
+
+# JavaScript to refocus input after form submission
+if st.session_state.refocus_function:
+    st.session_state.refocus_function = False
+    st.markdown("""
+        <script>
+        function refocusFunctionInput() {
+            var inputs = document.querySelectorAll('input[type="text"]');
+            for (var i = 0; i < inputs.length; i++) {
+                var input = inputs[i];
+                var label = input.closest('div')?.querySelector('label');
+                if (label && (label.textContent.includes('function') || 
+                    input.placeholder?.toLowerCase().includes('function'))) {
+                    setTimeout(function() {
+                        input.focus();
+                        input.select();
+                    }, 50);
+                    return;
+                }
+            }
+            // Fallback: find by placeholder
+            setTimeout(function() {
+                var allInputs = document.querySelectorAll('input[type="text"]');
+                for (var j = 0; j < allInputs.length; j++) {
+                    if (allInputs[j].placeholder && allInputs[j].placeholder.toLowerCase().includes('function')) {
+                        allInputs[j].focus();
+                        allInputs[j].select();
+                        break;
                     }
                 }
-                // Fallback: find by placeholder
-                setTimeout(function() {
-                    var allInputs = document.querySelectorAll('input[type="text"]');
-                    for (var j = 0; j < allInputs.length; j++) {
-                        if (allInputs[j].placeholder && allInputs[j].placeholder.toLowerCase().includes('stakeholder')) {
-                            allInputs[j].focus();
-                            allInputs[j].select();
-                            break;
-                        }
-                    }
-                }, 100);
+            }, 100);
+        }
+        refocusFunctionInput();
+        </script>
+    """, unsafe_allow_html=True)
+
+if st.session_state.refocus_stakeholder:
+    st.session_state.refocus_stakeholder = False
+    st.markdown("""
+        <script>
+        function refocusStakeholderInput() {
+            var inputs = document.querySelectorAll('input[type="text"]');
+            for (var i = 0; i < inputs.length; i++) {
+                var input = inputs[i];
+                var label = input.closest('div')?.querySelector('label');
+                if (label && (label.textContent.includes('stakeholder') || 
+                    input.placeholder?.toLowerCase().includes('stakeholder'))) {
+                    setTimeout(function() {
+                        input.focus();
+                        input.select();
+                    }, 50);
+                    return;
+                }
             }
-            refocusStakeholderInput();
-            </script>
-        """, unsafe_allow_html=True)
-    
-    # Display and remove stakeholders
-    if st.session_state.stakeholders:
-        st.write("**Current Stakeholders:**")
-        for idx, stake in enumerate(st.session_state.stakeholders):
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                st.write(f"{idx + 1}. {stake}")
-            with col2:
-                if st.button("🗑️", key=f"del_stake_{idx}"):
-                    st.session_state.stakeholders.pop(idx)
-                    st.rerun()
-    
+            // Fallback: find by placeholder
+            setTimeout(function() {
+                var allInputs = document.querySelectorAll('input[type="text"]');
+                for (var j = 0; j < allInputs.length; j++) {
+                    if (allInputs[j].placeholder && allInputs[j].placeholder.toLowerCase().includes('stakeholder')) {
+                        allInputs[j].focus();
+                        allInputs[j].select();
+                        break;
+                    }
+                }
+            }, 100);
+        }
+        refocusStakeholderInput();
+        </script>
+    """, unsafe_allow_html=True)
+
+# Display current functions and stakeholders with clear all option
+if st.session_state.functions or st.session_state.stakeholders:
     st.divider()
+    col_list_func, col_list_stake, col_clear = st.columns([2, 2, 1])
     
-    # Clear all button
-    if st.button("🗑️ Clear All", type="secondary"):
-        st.session_state.functions = []
-        st.session_state.stakeholders = []
-        st.session_state.raci_data = pd.DataFrame()
-        st.session_state.function_input_key = 0
-        st.session_state.stakeholder_input_key = 0
-        st.rerun()
+    with col_list_func:
+        if st.session_state.functions:
+            st.markdown("**Current Functions:**")
+            for idx, func in enumerate(st.session_state.functions):
+                col_name, col_del = st.columns([4, 1])
+                with col_name:
+                    st.write(f"{idx + 1}. {func}")
+                with col_del:
+                    if st.button("🗑️", key=f"del_func_{idx}", use_container_width=True):
+                        st.session_state.functions.pop(idx)
+                        st.rerun()
+        else:
+            st.markdown("*No functions added yet*")
+    
+    with col_list_stake:
+        if st.session_state.stakeholders:
+            st.markdown("**Current Stakeholders:**")
+            for idx, stake in enumerate(st.session_state.stakeholders):
+                col_name, col_del = st.columns([4, 1])
+                with col_name:
+                    st.write(f"{idx + 1}. {stake}")
+                with col_del:
+                    if st.button("🗑️", key=f"del_stake_{idx}", use_container_width=True):
+                        st.session_state.stakeholders.pop(idx)
+                        st.rerun()
+        else:
+            st.markdown("*No stakeholders added yet*")
+    
+    with col_clear:
+        st.markdown("<br>", unsafe_allow_html=True)  # Spacer
+        if st.button("🗑️ Clear All", type="secondary", use_container_width=True):
+            st.session_state.functions = []
+            st.session_state.stakeholders = []
+            st.session_state.raci_data = pd.DataFrame()
+            st.session_state.function_input_key = 0
+            st.session_state.stakeholder_input_key = 0
+            st.rerun()
+
+st.divider()
 
 # Main area - RACI Matrix
 if st.session_state.functions and st.session_state.stakeholders:
@@ -810,5 +1039,5 @@ if st.session_state.functions and st.session_state.stakeholders:
         st.markdown(f"<div style='background-color: {RACI_COLORS['I']}; padding: 10px; border-radius: 5px; text-align: center;'><b>I</b> - Informed</div>", unsafe_allow_html=True)
 
 else:
-    st.info("👈 Start by adding functions and stakeholders in the sidebar to create your RACI matrix.")
+    st.info("👆 Start by importing a previously exported file or adding functions and stakeholders above to create your RACI matrix.")
 
