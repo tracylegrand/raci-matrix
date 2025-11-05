@@ -527,7 +527,7 @@ def export_to_powerpoint(df, filename='raci_matrix.pptx'):
 st.set_page_config(page_title="RACI Matrix Builder", page_icon="📊", layout="wide")
 
 # Version and author info
-VERSION = "1.1.0"
+VERSION = "1.1.0-joke"
 
 # Custom CSS for version and author display in upper right
 st.markdown(f"""
