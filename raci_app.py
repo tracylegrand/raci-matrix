@@ -16,6 +16,16 @@ if 'functions' not in st.session_state:
     st.session_state.functions = []
 if 'stakeholders' not in st.session_state:
     st.session_state.stakeholders = []
+if 'function_input_key' not in st.session_state:
+    st.session_state.function_input_key = 0
+if 'stakeholder_input_key' not in st.session_state:
+    st.session_state.stakeholder_input_key = 0
+if 'refocus_function' not in st.session_state:
+    st.session_state.refocus_function = False
+if 'refocus_stakeholder' not in st.session_state:
+    st.session_state.refocus_stakeholder = False
+if 'last_raci_data_hash' not in st.session_state:
+    st.session_state.last_raci_data_hash = None
 
 # RACI options
 RACI_OPTIONS = {
@@ -46,6 +56,21 @@ def create_raci_matrix(functions, stakeholders):
         data=''
     )
     return matrix
+
+def validate_raci_row(row_data):
+    """Validate that a row has at most one 'A' (Accountable) role"""
+    accountable_count = sum(1 for val in row_data if str(val).strip() == 'A')
+    return accountable_count <= 1
+
+def validate_raci_matrix(df):
+    """Validate the entire RACI matrix for correctness"""
+    errors = []
+    for function in df.index:
+        row_data = df.loc[function].values
+        accountable_count = sum(1 for val in row_data if str(val).strip() == 'A')
+        if accountable_count > 1:
+            errors.append(f"Function '{function}' has {accountable_count} Accountable stakeholders. Only 1 is allowed.")
+    return errors
 
 def export_to_excel(df, filename='raci_matrix.xlsx'):
     """Export RACI matrix to Excel with formatting"""
@@ -236,6 +261,96 @@ def export_to_powerpoint(df, filename='raci_matrix.pptx'):
 # Streamlit UI
 st.set_page_config(page_title="RACI Matrix Builder", page_icon="📊", layout="wide")
 
+# Custom CSS and JavaScript to change cell selection color from red to light blue
+st.markdown("""
+    <style>
+    /* Override Streamlit's default red selection color - change to light blue */
+    /* Target all possible selection states */
+    div[data-baseweb="data-table"] tbody tr td:focus,
+    div[data-baseweb="data-table"] tbody tr td.selected,
+    div[data-baseweb="data-table"] tbody tr td[aria-selected="true"],
+    div[data-baseweb="data-table"] tbody tr td[data-selected="true"] {
+        background-color: #e3f2fd !important;
+        border: 2px solid #2196f3 !important;
+        outline: none !important;
+        box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2) !important;
+    }
+    
+    /* Change focus ring color to light blue */
+    div[data-baseweb="data-table"] tbody tr td:focus-visible {
+        outline: 2px solid #2196f3 !important;
+        outline-offset: -2px;
+        background-color: #e3f2fd !important;
+    }
+    
+    /* Remove red border/outline from selected cells - use light blue */
+    .stDataEditor [data-baseweb="data-table"] tbody tr td[aria-selected="true"],
+    .stDataEditor [data-baseweb="data-table"] tbody tr td.selected,
+    .stDataEditor [data-baseweb="data-table"] tbody tr td:focus {
+        background-color: #e3f2fd !important;
+        border-color: #2196f3 !important;
+        box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2) !important;
+    }
+    
+    /* Override Streamlit's red selection box */
+    div[data-baseweb="data-table"] tbody tr td[style*="background-color"]:focus,
+    div[data-baseweb="data-table"] tbody tr td[style*="rgb(255"] {
+        background-color: #e3f2fd !important;
+        border-color: #2196f3 !important;
+    }
+    
+    /* Override any red colors in the selection */
+    div[data-baseweb="data-table"] tbody tr td {
+        --selection-color: #2196f3 !important;
+    }
+    
+    /* Target the cell editor specifically */
+    .stDataEditor div[data-baseweb="data-table"] tbody tr td:focus {
+        background-color: #e3f2fd !important;
+        border: 2px solid #2196f3 !important;
+    }
+    
+    /* Override selectbox dropdown when cell is selected */
+    div[data-baseweb="data-table"] tbody tr td div[data-baseweb="select"]:focus {
+        background-color: #e3f2fd !important;
+    }
+    </style>
+    <script>
+    // Watch for red background colors and change them to light blue
+    function fixRedSelection() {
+        var cells = document.querySelectorAll('div[data-baseweb="data-table"] tbody tr td');
+        cells.forEach(function(cell) {
+            var style = window.getComputedStyle(cell);
+            var bgColor = style.backgroundColor;
+            // Check if it's red or red-like (rgb(255, ...) or similar)
+            if (bgColor.includes('rgb(255') || bgColor.includes('rgb(255, 0, 0)') || 
+                bgColor.includes('rgb(255,0,0)') || bgColor.includes('rgba(255')) {
+                if (cell === document.activeElement || cell.contains(document.activeElement)) {
+                    cell.style.backgroundColor = '#e3f2fd';
+                    cell.style.borderColor = '#2196f3';
+                    cell.style.borderWidth = '2px';
+                }
+            }
+        });
+    }
+    
+    // Run on load and periodically
+    setInterval(fixRedSelection, 100);
+    
+    // Also watch for focus events
+    document.addEventListener('focusin', function(e) {
+        var cell = e.target.closest('td');
+        if (cell && cell.closest('[data-baseweb="data-table"]')) {
+            setTimeout(function() {
+                cell.style.backgroundColor = '#e3f2fd';
+                cell.style.borderColor = '#2196f3';
+                cell.style.borderWidth = '2px';
+            }, 10);
+        }
+    }, true);
+    </script>
+""", unsafe_allow_html=True)
+
 st.title("📊 Interactive RACI Matrix Builder")
 st.markdown("Build and manage your RACI (Responsible, Accountable, Consulted, Informed) matrix interactively.")
 
@@ -245,11 +360,59 @@ with st.sidebar:
     
     # Add functions
     st.subheader("Functions (Rows)")
-    new_function = st.text_input("Add new function", key="new_function")
-    if st.button("➕ Add Function", key="add_function"):
-        if new_function and new_function not in st.session_state.functions:
-            st.session_state.functions.append(new_function)
-            st.rerun()
+    with st.form("add_function_form", clear_on_submit=False):
+        new_function = st.text_input("Add new function", key=f"function_input_{st.session_state.function_input_key}")
+        submitted_func = st.form_submit_button("➕ Add Function", use_container_width=True)
+        if submitted_func:
+            # Capture value
+            function_value = new_function.strip() if new_function else ""
+            if function_value:
+                if function_value not in st.session_state.functions:
+                    st.session_state.functions.append(function_value)
+                    # Clear input by incrementing key
+                    st.session_state.function_input_key += 1
+                    # Set flag to refocus
+                    st.session_state.refocus_function = True
+                    st.rerun()
+                else:
+                    st.warning("Function already exists!")
+            else:
+                st.warning("Please enter a function name.")
+    
+    # JavaScript to refocus input after form submission
+    if st.session_state.refocus_function:
+        st.session_state.refocus_function = False
+        st.markdown("""
+            <script>
+            function refocusFunctionInput() {
+                var inputs = document.querySelectorAll('input[type="text"]');
+                for (var i = 0; i < inputs.length; i++) {
+                    var input = inputs[i];
+                    var label = input.closest('div')?.querySelector('label');
+                    if (label && (label.textContent.includes('function') || 
+                        input.placeholder?.toLowerCase().includes('function'))) {
+                        setTimeout(function() {
+                            input.focus();
+                            input.select();
+                        }, 50);
+                        return;
+                    }
+                }
+                // Fallback: find by placeholder
+                setTimeout(function() {
+                    var allInputs = document.querySelectorAll('input[type="text"]');
+                    for (var j = 0; j < allInputs.length; j++) {
+                        if (allInputs[j].placeholder && allInputs[j].placeholder.toLowerCase().includes('function')) {
+                            allInputs[j].focus();
+                            allInputs[j].select();
+                            break;
+                        }
+                    }
+                }, 100);
+            }
+            refocusFunctionInput();
+            </script>
+        """, unsafe_allow_html=True)
     
     # Display and remove functions
     if st.session_state.functions:
@@ -267,11 +430,59 @@ with st.sidebar:
     
     # Add stakeholders
     st.subheader("Stakeholders (Columns)")
-    new_stakeholder = st.text_input("Add new stakeholder", key="new_stakeholder")
-    if st.button("➕ Add Stakeholder", key="add_stakeholder"):
-        if new_stakeholder and new_stakeholder not in st.session_state.stakeholders:
-            st.session_state.stakeholders.append(new_stakeholder)
-            st.rerun()
+    with st.form("add_stakeholder_form", clear_on_submit=False):
+        new_stakeholder = st.text_input("Add new stakeholder", key=f"stakeholder_input_{st.session_state.stakeholder_input_key}")
+        submitted_stake = st.form_submit_button("➕ Add Stakeholder", use_container_width=True)
+        if submitted_stake:
+            # Capture value
+            stakeholder_value = new_stakeholder.strip() if new_stakeholder else ""
+            if stakeholder_value:
+                if stakeholder_value not in st.session_state.stakeholders:
+                    st.session_state.stakeholders.append(stakeholder_value)
+                    # Clear input by incrementing key
+                    st.session_state.stakeholder_input_key += 1
+                    # Set flag to refocus
+                    st.session_state.refocus_stakeholder = True
+                    st.rerun()
+                else:
+                    st.warning("Stakeholder already exists!")
+            else:
+                st.warning("Please enter a stakeholder name.")
+    
+    # JavaScript to refocus input after form submission
+    if st.session_state.refocus_stakeholder:
+        st.session_state.refocus_stakeholder = False
+        st.markdown("""
+            <script>
+            function refocusStakeholderInput() {
+                var inputs = document.querySelectorAll('input[type="text"]');
+                for (var i = 0; i < inputs.length; i++) {
+                    var input = inputs[i];
+                    var label = input.closest('div')?.querySelector('label');
+                    if (label && (label.textContent.includes('stakeholder') || 
+                        input.placeholder?.toLowerCase().includes('stakeholder'))) {
+                        setTimeout(function() {
+                            input.focus();
+                            input.select();
+                        }, 50);
+                        return;
+                    }
+                }
+                // Fallback: find by placeholder
+                setTimeout(function() {
+                    var allInputs = document.querySelectorAll('input[type="text"]');
+                    for (var j = 0; j < allInputs.length; j++) {
+                        if (allInputs[j].placeholder && allInputs[j].placeholder.toLowerCase().includes('stakeholder')) {
+                            allInputs[j].focus();
+                            allInputs[j].select();
+                            break;
+                        }
+                    }
+                }, 100);
+            }
+            refocusStakeholderInput();
+            </script>
+        """, unsafe_allow_html=True)
     
     # Display and remove stakeholders
     if st.session_state.stakeholders:
@@ -292,6 +503,8 @@ with st.sidebar:
         st.session_state.functions = []
         st.session_state.stakeholders = []
         st.session_state.raci_data = pd.DataFrame()
+        st.session_state.function_input_key = 0
+        st.session_state.stakeholder_input_key = 0
         st.rerun()
 
 # Main area - RACI Matrix
@@ -306,28 +519,88 @@ if st.session_state.functions and st.session_state.stakeholders:
         )
     
     st.subheader("RACI Matrix")
-    st.caption("Select R (Responsible), A (Accountable), C (Consulted), or I (Informed) for each cell")
+    st.caption("⚠️ Each function must have exactly 1 Accountable (A) stakeholder. Multiple Responsible (R), Consulted (C), or Informed (I) roles are allowed.")
+    
+    # Validate current matrix and show warnings
+    validation_errors = validate_raci_matrix(st.session_state.raci_data)
+    if validation_errors:
+        for error in validation_errors:
+            st.warning(error)
     
     # Create interactive matrix using st.data_editor
+    # Check if matrix structure changed (new functions/stakeholders added)
+    if st.session_state.raci_data.empty or \
+       list(st.session_state.raci_data.index) != st.session_state.functions or \
+       list(st.session_state.raci_data.columns) != st.session_state.stakeholders:
+        # Recreate matrix with new structure
+        st.session_state.raci_data = create_raci_matrix(
+            st.session_state.functions,
+            st.session_state.stakeholders
+        )
+    
+    # Prepare data for editor - ensure consistent format
+    # Use a fresh copy to avoid reference issues
+    data_for_editor = st.session_state.raci_data.copy()
+    # Normalize empty values to empty strings for consistency
+    data_for_editor = data_for_editor.fillna('')
+    
+    # Create the data editor WITHOUT a key
+    # Removing the key prevents widget state caching that causes every 2nd edit to revert
+    # Session state will maintain the data between renders
     edited_df = st.data_editor(
-        st.session_state.raci_data,
+        data_for_editor,
         column_config={
             col: st.column_config.SelectboxColumn(
                 col,
                 width="medium",
                 options=list(RACI_OPTIONS.keys()),
-                help=f"Select RACI role for {col}"
+                help=f"Select RACI role for {col}. Note: Only 1 'A' per function!"
             )
             for col in st.session_state.raci_data.columns
         },
         use_container_width=True,
         height=400,
         hide_index=False
+        # NO KEY - this prevents widget state caching that causes reverts
     )
     
-    # Update session state if changed
-    if not edited_df.equals(st.session_state.raci_data):
-        st.session_state.raci_data = edited_df
+    # CRITICAL FIX: Always update session state from editor's return value
+    # Do this immediately and unconditionally to prevent reverts
+    if edited_df is not None:
+        # Normalize empty values to empty strings
+        edited_clean = edited_df.fillna('')
+        
+        # Compare to see if we need to update
+        current_str = data_for_editor.astype(str).to_string()
+        edited_str = edited_clean.astype(str).to_string()
+        
+        # Update session state if changed
+        if current_str != edited_str:
+            # Update session state immediately - this is the source of truth
+            st.session_state.raci_data = edited_clean.copy()
+            # Force a rerun to ensure UI reflects the change immediately
+            st.rerun()
+    
+    # Check validation status AFTER updating session state
+    # Use the updated session state for validation
+    validation_errors = validate_raci_matrix(st.session_state.raci_data)
+    
+    # Use a container to manage validation messages so they clear properly
+    validation_container = st.container()
+    with validation_container:
+        if validation_errors:
+            # Show errors - these will clear when validation passes
+            for error in validation_errors:
+                st.error(error)
+        else:
+            # Only show success if we have actual data entries (not all empty)
+            has_data = False
+            if not st.session_state.raci_data.empty:
+                # Check if any cell has a non-empty value
+                has_data = (st.session_state.raci_data.fillna('').astype(str) != '').any().any()
+            
+            if has_data:
+                st.success("✅ All functions have valid RACI assignments!")
     
     # Display styled matrix
     st.subheader("Visual Matrix")
