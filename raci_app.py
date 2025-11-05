@@ -341,26 +341,29 @@ st.set_page_config(page_title="RACI Matrix Builder", page_icon="📊", layout="w
 
 # Version and author info
 VERSION = "1.0.0"
-AUTHOR = "TL"
 
 # Custom CSS for version and author display in upper right
 st.markdown(f"""
     <style>
     .version-info {{
-        position: fixed;
-        top: 10px;
-        right: 20px;
-        background-color: rgba(255, 255, 255, 0.9);
-        padding: 8px 12px;
-        border-radius: 5px;
-        font-size: 12px;
-        color: #666;
-        z-index: 999;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        position: fixed !important;
+        top: 10px !important;
+        right: 20px !important;
+        background-color: rgba(255, 255, 255, 0.95) !important;
+        padding: 8px 12px !important;
+        border-radius: 5px !important;
+        font-size: 12px !important;
+        color: #666 !important;
+        z-index: 9999 !important;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1) !important;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+        white-space: nowrap !important;
+        display: block !important;
+        visibility: visible !important;
     }}
     </style>
     <div class="version-info">
-        <strong>v{VERSION}</strong> | Author: {AUTHOR}
+        <strong>v{VERSION}</strong> | By: TDLG
     </div>
 """, unsafe_allow_html=True)
 
@@ -454,7 +457,13 @@ st.markdown("""
     </script>
 """, unsafe_allow_html=True)
 
-st.title("📊 Interactive RACI Matrix Builder")
+# Title and version row
+col_title, col_version = st.columns([3, 1])
+with col_title:
+    st.title("📊 Interactive RACI Matrix Builder")
+with col_version:
+    st.markdown(f"<div style='text-align: right; padding-top: 1rem; color: #666; font-size: 12px;'><strong>v{VERSION}</strong> | By: TDLG</div>", unsafe_allow_html=True)
+
 st.markdown("Build and manage your RACI (Responsible, Accountable, Consulted, Informed) matrix interactively.")
 
 # Sidebar for configuration
