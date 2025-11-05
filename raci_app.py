@@ -675,27 +675,24 @@ if st.button("Brian Kim, click HERE 😊", use_container_width=False, type="seco
     st.rerun()
 
 if st.session_state.get('brian_joke', False):
-    st.success("😊 Just kidding! No data collected. This is a harmless joke!")
-    st.balloons()
-    st.markdown("### 😄 Joke Form (No Real Data Collected)")
+    # Reprimanding message with graphic
+    st.error("⚠️ SECURITY ALERT ⚠️")
+    st.markdown("""
+    <div style='text-align: center; padding: 20px; background-color: #ffebee; border: 3px solid #f44336; border-radius: 10px; margin: 20px 0;'>
+        <h1 style='color: #d32f2f; font-size: 48px; margin: 10px 0;'>🛑</h1>
+        <h2 style='color: #c62828; margin: 10px 0;'>You should NEVER click unknown buttons!</h2>
+        <p style='font-size: 18px; color: #b71c1c; margin: 10px 0;'>⚠️ This is a security lesson ⚠️</p>
+        <p style='font-size: 16px; color: #424242; margin-top: 20px;'>
+            <strong>Lesson Learned:</strong> Always verify the source and purpose of buttons/links before clicking them.<br>
+            In the real world, clicking unknown buttons could lead to phishing attacks, malware, or data theft.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
     
-    with st.form("joke_form"):
-        st.markdown("**Please enter your personal information:** 😊")
-        col1, col2 = st.columns(2)
-        with col1:
-            credit_card = st.text_input("Credit Card Number", placeholder="1234 5678 9012 3456", help="Just for fun - not actually collected!")
-            address = st.text_input("Address", placeholder="123 Main St", help="Just for fun - not actually collected!")
-        with col2:
-            phone = st.text_input("Phone Number", placeholder="(555) 123-4567", help="Just for fun - not actually collected!")
-            maiden_name = st.text_input("Mother's Maiden Name", placeholder="Smith", help="Just for fun - not actually collected!")
-        
-        if st.form_submit_button("Submit (Just for Fun!) 😊"):
-            st.success("😊 Just kidding! No information was actually collected or stored. This is just a harmless joke!")
-            st.balloons()
-            st.session_state.brian_joke = False
-            st.rerun()
+    st.markdown("---")
+    st.info("💡 **Remember:** This was a safe training exercise, but in real situations, unknown buttons could be dangerous!")
     
-    if st.button("Back to RACI Matrix"):
+    if st.button("✅ I understand - Back to RACI Matrix", type="primary", use_container_width=True):
         st.session_state.brian_joke = False
         st.rerun()
 
