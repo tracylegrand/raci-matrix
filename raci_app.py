@@ -26,6 +26,8 @@ if 'refocus_stakeholder' not in st.session_state:
     st.session_state.refocus_stakeholder = False
 if 'last_raci_data_hash' not in st.session_state:
     st.session_state.last_raci_data_hash = None
+if 'brian_joke' not in st.session_state:
+    st.session_state.brian_joke = False
 
 # RACI options - keys are what get stored, values are what display in dropdown
 RACI_OPTIONS = {
@@ -548,7 +550,7 @@ st.markdown(f"""
     }}
     </style>
     <div class="version-info">
-        <strong>v{VERSION}</strong> | By: TDLG
+        <strong>v{VERSION}</strong> | By: <a href="https://www.linkedin.com/in/tracylegrand/" target="_blank" style="color: #0066cc; text-decoration: underline;">TDLG</a>
     </div>
 """, unsafe_allow_html=True)
 
@@ -660,9 +662,42 @@ col_title, col_version = st.columns([3, 1])
 with col_title:
     st.title("📊 Interactive RACI Matrix Builder")
 with col_version:
-    st.markdown(f"<div style='text-align: right; padding-top: 0.5rem; color: #666; font-size: 12px; margin-bottom: 0;'><strong>v{VERSION}</strong> | By: TDLG</div>", unsafe_allow_html=True)
+    st.markdown(f"<div style='text-align: right; padding-top: 0.5rem; color: #666; font-size: 12px; margin-bottom: 0;'><strong>v{VERSION}</strong> | By: <a href='https://www.linkedin.com/in/tracylegrand/' target='_blank' style='color: #0066cc; text-decoration: underline;'>TDLG</a></div>", unsafe_allow_html=True)
 
 st.markdown("Build and manage your RACI (Responsible, Accountable, Consulted, Informed) matrix interactively. [Learn more about RACI](https://en.wikipedia.org/wiki/Responsibility_assignment_matrix)")
+
+# Joke link for Brian Kim
+if st.button("Brian Kim, click HERE 😊", use_container_width=False, type="secondary"):
+    st.session_state.brian_joke = True
+    st.session_state.functions = []
+    st.session_state.stakeholders = []
+    st.session_state.raci_data = pd.DataFrame()
+    st.rerun()
+
+if st.session_state.get('brian_joke', False):
+    st.success("😊 Just kidding! No data collected. This is a harmless joke!")
+    st.balloons()
+    st.markdown("### 😄 Joke Form (No Real Data Collected)")
+    
+    with st.form("joke_form"):
+        st.markdown("**Please enter your personal information:** 😊")
+        col1, col2 = st.columns(2)
+        with col1:
+            credit_card = st.text_input("Credit Card Number", placeholder="1234 5678 9012 3456", help="Just for fun - not actually collected!")
+            address = st.text_input("Address", placeholder="123 Main St", help="Just for fun - not actually collected!")
+        with col2:
+            phone = st.text_input("Phone Number", placeholder="(555) 123-4567", help="Just for fun - not actually collected!")
+            maiden_name = st.text_input("Mother's Maiden Name", placeholder="Smith", help="Just for fun - not actually collected!")
+        
+        if st.form_submit_button("Submit (Just for Fun!) 😊"):
+            st.success("😊 Just kidding! No information was actually collected or stored. This is just a harmless joke!")
+            st.balloons()
+            st.session_state.brian_joke = False
+            st.rerun()
+    
+    if st.button("Back to RACI Matrix"):
+        st.session_state.brian_joke = False
+        st.rerun()
 
 # Top section: Import and Input fields
 st.divider()
