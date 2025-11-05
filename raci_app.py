@@ -27,13 +27,21 @@ if 'refocus_stakeholder' not in st.session_state:
 if 'last_raci_data_hash' not in st.session_state:
     st.session_state.last_raci_data_hash = None
 
-# RACI options
+# RACI options - keys are what get stored, values are what display in dropdown
 RACI_OPTIONS = {
     '': '',
-    'R': 'Responsible',
-    'A': 'Accountable',
-    'C': 'Consulted',
-    'I': 'Informed'
+    'R': 'R - Responsible',
+    'A': 'A - Accountable',
+    'C': 'C - Consulted',
+    'I': 'I - Informed'
+}
+
+# RACI labels for display (maps letter to full label)
+RACI_LABELS = {
+    'R': 'R - Responsible',
+    'A': 'A - Accountable',
+    'C': 'C - Consulted',
+    'I': 'I - Informed'
 }
 
 # Color scheme for RACI
@@ -67,7 +75,13 @@ def validate_raci_matrix(df):
     errors = []
     for function in df.index:
         row_data = df.loc[function].values
-        accountable_count = sum(1 for val in row_data if str(val).strip() == 'A')
+        # Extract letter from value (could be 'A' or 'A - Accountable')
+        accountable_count = 0
+        for val in row_data:
+            val_str = str(val).strip()
+            # Check if it starts with 'A' (could be 'A' or 'A - Accountable')
+            if val_str and (val_str == 'A' or val_str.startswith('A -')):
+                accountable_count += 1
         if accountable_count > 1:
             errors.append(f"Function '{function}' has {accountable_count} Accountable stakeholders. Only 1 is allowed.")
     return errors
@@ -123,8 +137,34 @@ def export_to_excel(df, filename='raci_matrix.xlsx'):
                     cell = worksheet.cell(row=row_idx, column=col_idx)
                     value = str(df.loc[row, col]).strip()
                     
-                    if value in RACI_COLORS:
-                        hex_color = RACI_COLORS[value].replace('#', '')
+                    # Extract letter and convert to label for display
+                    raci_letter = ''
+                    display_value = value
+                    if value:
+                        if value.startswith('R -') or value == 'R':
+                            raci_letter = 'R'
+                            display_value = 'R - Responsible'
+                        elif value.startswith('A -') or value == 'A':
+                            raci_letter = 'A'
+                            display_value = 'A - Accountable'
+                        elif value.startswith('C -') or value == 'C':
+                            raci_letter = 'C'
+                            display_value = 'C - Consulted'
+                        elif value.startswith('I -') or value == 'I':
+                            raci_letter = 'I'
+                            display_value = 'I - Informed'
+                        elif len(value) == 1 and value in ['R', 'A', 'C', 'I']:
+                            raci_letter = value
+                            display_value = RACI_LABELS.get(value, value)
+                        else:
+                            raci_letter = value[0] if len(value) > 0 else ''
+                            if raci_letter in RACI_LABELS:
+                                display_value = RACI_LABELS[raci_letter]
+                    
+                    cell.value = display_value
+                    
+                    if raci_letter in RACI_COLORS:
+                        hex_color = RACI_COLORS[raci_letter].replace('#', '')
                         cell.fill = PatternFill(
                             start_color=hex_color,
                             end_color=hex_color,
@@ -133,7 +173,7 @@ def export_to_excel(df, filename='raci_matrix.xlsx'):
                     
                     cell.alignment = Alignment(horizontal='center', vertical='center')
                     cell.border = border
-                    cell.font = Font(size=11, bold=(value in ['R', 'A']))
+                    cell.font = Font(size=11, bold=(raci_letter in ['R', 'A']))
             
             # Add legend
             legend_row = len(df) + 3
@@ -216,26 +256,64 @@ def export_to_powerpoint(df, filename='raci_matrix.pptx'):
             for col_idx, stakeholder in enumerate(df.columns, start=1):
                 cell = table.cell(row_idx, col_idx)
                 value = str(df.loc[function, stakeholder]).strip()
-                cell.text = value
                 
-                if value in RACI_COLORS:
-                    color = RACI_COLORS[value]
+                # Value could be just letter ('R') or full label ('R - Responsible')
+                # Extract the letter for color matching
+                raci_letter = ''
+                display_text = value
+                
+                if value:
+                    # Check if it's a full label format
+                    if value.startswith('R -') or value == 'R - Responsible':
+                        raci_letter = 'R'
+                        display_text = 'R - Responsible'
+                    elif value.startswith('A -') or value == 'A - Accountable':
+                        raci_letter = 'A'
+                        display_text = 'A - Accountable'
+                    elif value.startswith('C -') or value == 'C - Consulted':
+                        raci_letter = 'C'
+                        display_text = 'C - Consulted'
+                    elif value.startswith('I -') or value == 'I - Informed':
+                        raci_letter = 'I'
+                        display_text = 'I - Informed'
+                    elif len(value) == 1 and value in ['R', 'A', 'C', 'I']:
+                        # Just the letter - convert to full label
+                        raci_letter = value
+                        display_text = RACI_LABELS.get(value, value)
+                    else:
+                        # Try to extract first character
+                        raci_letter = value[0] if len(value) > 0 else ''
+                        if raci_letter in RACI_LABELS:
+                            display_text = RACI_LABELS[raci_letter]
+                
+                cell.text = display_text
+                
+                # Apply color based on the letter
+                if raci_letter in RACI_COLORS:
+                    color = RACI_COLORS[raci_letter]
                     rgb = tuple(int(color[i:i+2], 16) for i in (1, 3, 5))
                     cell.fill.solid()
                     cell.fill.fore_color.rgb = RGBColor(*rgb)
         
-        # Format all cells
+        # Format all cells with larger font
         for row in range(num_rows):
             for col in range(num_cols):
                 cell = table.cell(row, col)
-                cell.text_frame.paragraphs[0].font.size = Pt(10)
-                cell.text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
+                # Increased font size for data cells (was Pt(10), now Pt(14))
+                # Header and index keep larger size
                 if row == 0 or col == 0:
+                    # Header and index cells
+                    cell.text_frame.paragraphs[0].font.size = Pt(12)
                     cell.text_frame.paragraphs[0].font.bold = True
                     if row == 0:
                         cell.text_frame.paragraphs[0].font.color.rgb = RGBColor(255, 255, 255)
                     else:
                         cell.text_frame.paragraphs[0].font.color.rgb = RGBColor(0, 0, 0)
+                else:
+                    # Data cells - larger font
+                    cell.text_frame.paragraphs[0].font.size = Pt(14)
+                    cell.text_frame.paragraphs[0].font.bold = False
+                cell.text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
         
         # Add legend
         legend_top = Inches(6.5)
@@ -260,6 +338,31 @@ def export_to_powerpoint(df, filename='raci_matrix.pptx'):
 
 # Streamlit UI
 st.set_page_config(page_title="RACI Matrix Builder", page_icon="📊", layout="wide")
+
+# Version and author info
+VERSION = "1.0.0"
+AUTHOR = "TL"
+
+# Custom CSS for version and author display in upper right
+st.markdown(f"""
+    <style>
+    .version-info {{
+        position: fixed;
+        top: 10px;
+        right: 20px;
+        background-color: rgba(255, 255, 255, 0.9);
+        padding: 8px 12px;
+        border-radius: 5px;
+        font-size: 12px;
+        color: #666;
+        z-index: 999;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }}
+    </style>
+    <div class="version-info">
+        <strong>v{VERSION}</strong> | Author: {AUTHOR}
+    </div>
+""", unsafe_allow_html=True)
 
 # Custom CSS and JavaScript to change cell selection color from red to light blue
 st.markdown("""
@@ -547,13 +650,14 @@ if st.session_state.functions and st.session_state.stakeholders:
     # Create the data editor WITHOUT a key
     # Removing the key prevents widget state caching that causes every 2nd edit to revert
     # Session state will maintain the data between renders
+    # Use the full labels as options so they display in the dropdown
     edited_df = st.data_editor(
         data_for_editor,
         column_config={
             col: st.column_config.SelectboxColumn(
                 col,
                 width="medium",
-                options=list(RACI_OPTIONS.keys()),
+                options=list(RACI_OPTIONS.values()),  # Use values (labels) for display
                 help=f"Select RACI role for {col}. Note: Only 1 'A' per function!"
             )
             for col in st.session_state.raci_data.columns
@@ -608,8 +712,25 @@ if st.session_state.functions and st.session_state.stakeholders:
     
     # Apply styling function
     def style_raci(val):
-        if val in RACI_COLORS:
-            return f'background-color: {RACI_COLORS[val]}'
+        # Extract letter from value (could be 'R' or 'R - Responsible')
+        val_str = str(val).strip()
+        raci_letter = ''
+        if val_str:
+            if val_str.startswith('R -') or val_str == 'R':
+                raci_letter = 'R'
+            elif val_str.startswith('A -') or val_str == 'A':
+                raci_letter = 'A'
+            elif val_str.startswith('C -') or val_str == 'C':
+                raci_letter = 'C'
+            elif val_str.startswith('I -') or val_str == 'I':
+                raci_letter = 'I'
+            elif len(val_str) == 1 and val_str in ['R', 'A', 'C', 'I']:
+                raci_letter = val_str
+            else:
+                raci_letter = val_str[0] if len(val_str) > 0 else ''
+        
+        if raci_letter in RACI_COLORS:
+            return f'background-color: {RACI_COLORS[raci_letter]}'
         return ''
     
     # Use map instead of applymap (applymap deprecated in pandas 2.1.0+)
