@@ -1,8 +1,4 @@
-# 📊 Streamlit Applications
-
-This repository contains multiple Streamlit applications:
-
-## 1. Interactive RACI Matrix Builder
+# 📊 Interactive RACI Matrix Builder
 
 A Streamlit application for creating and managing RACI (Responsible, Accountable, Consulted, Informed) matrices interactively.
 
@@ -52,28 +48,6 @@ See [DEPLOYMENT.md](./DEPLOYMENT.md) for detailed instructions on sharing this a
 
 - Python 3.8+
 - See `requirements.txt` for dependencies
-
-## 2. Practice Manager Performance Dashboard
-
-A Streamlit application for tracking and analyzing Practice Manager performance with Technical Services bookings in the manufacturing industry.
-
-**Quick Start:**
-```bash
-streamlit run practice_manager_dashboard.py
-```
-
-**Features:**
-- Track 5 Practice Managers' quarterly performance
-- Total, Paid, and Investment bookings tracking
-- Customer account linking (manufacturing industry)
-- Interactive filtering and visualizations
-- Quarter-over-quarter growth analysis
-
-**To share with colleagues:** See [SHARE_PM_DASHBOARD.md](./SHARE_PM_DASHBOARD.md) for quick deployment guide.
-
-For full documentation, see [PM_DASHBOARD_README.md](./PM_DASHBOARD_README.md)
-
----
 
 ## License
 
