@@ -1,0 +1,6 @@
+After creating the repository on GitHub, run this command:
+
+git push -u origin main
+
+
+
