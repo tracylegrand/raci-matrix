@@ -521,6 +521,223 @@ def export_to_powerpoint(df, filename='raci_matrix.pptx'):
         st.error(f"Error exporting to PowerPoint: {str(e)}")
         raise
 
+# ============================================================================
+# Snowflake Integration Functions
+# ============================================================================
+
+def get_snowflake_connection():
+    """Get Snowflake connection using Streamlit secrets"""
+    try:
+        import snowflake.connector
+        
+        # Get credentials from Streamlit secrets
+        # Expected structure in .streamlit/secrets.toml:
+        # [snowflake]
+        # account = "your_account"
+        # user = "your_username"
+        # password = "your_password"
+        # warehouse = "your_warehouse"
+        # database = "your_database"
+        # schema = "your_schema"
+        # role = "your_role"  # optional
+        
+        if 'snowflake' not in st.secrets:
+            return None, "Snowflake credentials not found in Streamlit secrets. Please configure secrets.toml"
+        
+        snowflake_config = st.secrets['snowflake']
+        
+        conn = snowflake.connector.connect(
+            account=snowflake_config['account'],
+            user=snowflake_config['user'],
+            password=snowflake_config['password'],
+            warehouse=snowflake_config.get('warehouse', ''),
+            database=snowflake_config.get('database', ''),
+            schema=snowflake_config.get('schema', ''),
+            role=snowflake_config.get('role', '')
+        )
+        
+        return conn, None
+    except ImportError:
+        return None, "snowflake-connector-python not installed. Please install it: pip install snowflake-connector-python"
+    except Exception as e:
+        return None, f"Error connecting to Snowflake: {str(e)}"
+
+def initialize_snowflake_table(conn):
+    """Initialize/create the RACI matrices table in Snowflake"""
+    try:
+        cursor = conn.cursor()
+        
+        # Create table if it doesn't exist
+        # Use fully qualified name if database/schema are specified
+        create_table_sql = """
+        CREATE TABLE IF NOT EXISTS raci_matrices (
+            matrix_id VARCHAR(255),
+            matrix_name VARCHAR(500),
+            functions VARIANT,
+            stakeholders VARIANT,
+            raci_data VARIANT,
+            created_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+            updated_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+            created_by VARCHAR(255),
+            PRIMARY KEY (matrix_id)
+        )
+        """
+        
+        cursor.execute(create_table_sql)
+        cursor.close()
+        return True, None
+    except Exception as e:
+        return False, f"Error initializing Snowflake table: {str(e)}"
+
+def save_to_snowflake(matrix_name, functions, stakeholders, raci_data, created_by="user"):
+    """Save RACI matrix to Snowflake"""
+    try:
+        conn, error = get_snowflake_connection()
+        if error:
+            return False, error
+        
+        # Initialize table
+        success, error = initialize_snowflake_table(conn)
+        if not success:
+            conn.close()
+            return False, error
+        
+        # Generate unique matrix ID
+        import uuid
+        import json
+        from datetime import datetime
+        
+        matrix_id = str(uuid.uuid4())
+        
+        # Convert data to JSON for VARIANT storage
+        functions_json = json.dumps(functions)
+        stakeholders_json = json.dumps(stakeholders)
+        
+        # Convert DataFrame to JSON
+        raci_data_dict = raci_data.to_dict(orient='index')
+        raci_data_json = json.dumps(raci_data_dict)
+        
+        cursor = conn.cursor()
+        
+        # Check if matrix with this name already exists (optional: allow updates by name)
+        # For now, always insert new (each save creates a new matrix_id)
+        # If you want to update by name, you'd need to query first
+        
+        # Insert new record
+        insert_sql = """
+        INSERT INTO raci_matrices (matrix_id, matrix_name, functions, stakeholders, raci_data, created_by)
+        VALUES (%s, %s, PARSE_JSON(%s), PARSE_JSON(%s), PARSE_JSON(%s), %s)
+        """
+        
+        cursor.execute(insert_sql, (
+            matrix_id, matrix_name, functions_json, stakeholders_json, raci_data_json, created_by
+        ))
+        
+        # Snowflake auto-commits, no need for explicit commit
+        cursor.close()
+        conn.close()
+        
+        return True, f"Successfully saved '{matrix_name}' to Snowflake (ID: {matrix_id})"
+    except Exception as e:
+        return False, f"Error saving to Snowflake: {str(e)}"
+
+def load_from_snowflake(matrix_id):
+    """Load RACI matrix from Snowflake"""
+    try:
+        import json
+        
+        conn, error = get_snowflake_connection()
+        if error:
+            return False, error, None, None, None
+        
+        cursor = conn.cursor()
+        
+        select_sql = """
+        SELECT matrix_name, functions, stakeholders, raci_data
+        FROM raci_matrices
+        WHERE matrix_id = %s
+        """
+        
+        cursor.execute(select_sql, (matrix_id,))
+        result = cursor.fetchone()
+        
+        cursor.close()
+        conn.close()
+        
+        if not result:
+            return False, "Matrix not found", None, None, None
+        
+        matrix_name, functions_json, stakeholders_json, raci_data_json = result
+        
+        # Parse JSON data
+        functions = json.loads(functions_json) if functions_json else []
+        stakeholders = json.loads(stakeholders_json) if stakeholders_json else []
+        raci_data_dict = json.loads(raci_data_json) if raci_data_json else {}
+        
+        # Convert dict back to DataFrame
+        raci_data = pd.DataFrame.from_dict(raci_data_dict, orient='index')
+        raci_data.index.name = 'Function'
+        
+        return True, f"Successfully loaded '{matrix_name}'", functions, stakeholders, raci_data
+    except Exception as e:
+        return False, f"Error loading from Snowflake: {str(e)}", None, None, None
+
+def list_snowflake_matrices():
+    """List all saved RACI matrices from Snowflake"""
+    try:
+        conn, error = get_snowflake_connection()
+        if error:
+            return False, error, []
+        
+        cursor = conn.cursor()
+        
+        select_sql = """
+        SELECT matrix_id, matrix_name, created_at, updated_at, created_by
+        FROM raci_matrices
+        ORDER BY updated_at DESC
+        """
+        
+        cursor.execute(select_sql)
+        results = cursor.fetchall()
+        
+        cursor.close()
+        conn.close()
+        
+        # Format results as list of dicts
+        matrices = []
+        for row in results:
+            matrices.append({
+                'matrix_id': row[0],
+                'matrix_name': row[1],
+                'created_at': row[2],
+                'updated_at': row[3],
+                'created_by': row[4]
+            })
+        
+        return True, None, matrices
+    except Exception as e:
+        return False, f"Error listing matrices: {str(e)}", []
+
+def delete_from_snowflake(matrix_id):
+    """Delete a RACI matrix from Snowflake"""
+    try:
+        conn, error = get_snowflake_connection()
+        if error:
+            return False, error
+        
+        cursor = conn.cursor()
+        
+        delete_sql = "DELETE FROM raci_matrices WHERE matrix_id = %s"
+        cursor.execute(delete_sql, (matrix_id,))
+        
+        # Snowflake auto-commits, no need for explicit commit
+        cursor.close()
+        conn.close()
+        
+        return True, "Matrix deleted successfully"
+    except Exception as e:
+        return False, f"Error deleting matrix: {str(e)}"
+
 # Streamlit UI
 st.set_page_config(page_title="RACI Matrix Builder", page_icon="📊", layout="wide")
 
@@ -1024,6 +1241,130 @@ if st.session_state.functions and st.session_state.stakeholders:
             )
         except Exception as e:
             st.error(f"Cannot export to PowerPoint: {str(e)}")
+    
+    # Snowflake Integration Section
+    st.divider()
+    st.subheader("💾 Snowflake Database")
+    
+    # Check if Snowflake is configured
+    try:
+        snowflake_configured = 'snowflake' in st.secrets
+    except (AttributeError, TypeError):
+        snowflake_configured = False
+    
+    if not snowflake_configured:
+        st.info("💡 To use Snowflake storage, configure your credentials in Streamlit secrets. See documentation for setup instructions.")
+    else:
+        # Create tabs for Save, Load, and Manage
+        tab_save, tab_load, tab_manage = st.tabs(["💾 Save to Snowflake", "📥 Load from Snowflake", "🗂️ Manage Saved Matrices"])
+        
+        with tab_save:
+            st.markdown("**Save Current Matrix to Snowflake**")
+            if st.session_state.raci_data.empty:
+                st.warning("Please create a RACI matrix before saving to Snowflake.")
+            else:
+                matrix_name = st.text_input(
+                    "Matrix Name",
+                    value="",
+                    help="Enter a descriptive name for this RACI matrix",
+                    key="snowflake_matrix_name"
+                )
+                created_by = st.text_input(
+                    "Created By",
+                    value="user",
+                    help="Enter your name or identifier",
+                    key="snowflake_created_by"
+                )
+                
+                if st.button("💾 Save to Snowflake", use_container_width=True, type="primary"):
+                    if not matrix_name:
+                        st.error("Please enter a matrix name.")
+                    else:
+                        with st.spinner("Saving to Snowflake..."):
+                            success, message = save_to_snowflake(
+                                matrix_name,
+                                st.session_state.functions,
+                                st.session_state.stakeholders,
+                                st.session_state.raci_data,
+                                created_by
+                            )
+                            if success:
+                                st.success(message)
+                            else:
+                                st.error(message)
+        
+        with tab_load:
+            st.markdown("**Load Matrix from Snowflake**")
+            with st.spinner("Loading saved matrices..."):
+                success, error, matrices = list_snowflake_matrices()
+            
+            if not success:
+                st.error(f"Error loading matrices: {error}")
+            elif not matrices:
+                st.info("No saved matrices found in Snowflake.")
+            else:
+                # Create a selectbox with matrix names
+                matrix_options = {f"{m['matrix_name']} (Updated: {m['updated_at']})": m['matrix_id'] for m in matrices}
+                selected_matrix = st.selectbox(
+                    "Select a matrix to load",
+                    options=list(matrix_options.keys()),
+                    key="snowflake_load_select"
+                )
+                
+                col_load, col_info = st.columns([1, 2])
+                with col_load:
+                    if st.button("📥 Load Selected Matrix", use_container_width=True, type="primary"):
+                        matrix_id = matrix_options[selected_matrix]
+                        with st.spinner("Loading matrix..."):
+                            success, message, functions, stakeholders, raci_data = load_from_snowflake(matrix_id)
+                            if success:
+                                st.session_state.functions = functions
+                                st.session_state.stakeholders = stakeholders
+                                st.session_state.raci_data = raci_data.fillna('')
+                                st.success(message)
+                                st.rerun()
+                            else:
+                                st.error(message)
+                
+                with col_info:
+                    # Show details of selected matrix
+                    if selected_matrix:
+                        matrix_id = matrix_options[selected_matrix]
+                        selected_matrix_info = next(m for m in matrices if m['matrix_id'] == matrix_id)
+                        st.markdown("**Matrix Details:**")
+                        st.write(f"**Name:** {selected_matrix_info['matrix_name']}")
+                        st.write(f"**Created:** {selected_matrix_info['created_at']}")
+                        st.write(f"**Updated:** {selected_matrix_info['updated_at']}")
+                        st.write(f"**Created By:** {selected_matrix_info['created_by']}")
+        
+        with tab_manage:
+            st.markdown("**Manage Saved Matrices**")
+            with st.spinner("Loading saved matrices..."):
+                success, error, matrices = list_snowflake_matrices()
+            
+            if not success:
+                st.error(f"Error loading matrices: {error}")
+            elif not matrices:
+                st.info("No saved matrices found in Snowflake.")
+            else:
+                # Display matrices in a table with delete option
+                for matrix in matrices:
+                    with st.expander(f"🗂️ {matrix['matrix_name']} - Updated: {matrix['updated_at']}"):
+                        col_info, col_delete = st.columns([3, 1])
+                        with col_info:
+                            st.write(f"**Matrix ID:** `{matrix['matrix_id']}`")
+                            st.write(f"**Created:** {matrix['created_at']}")
+                            st.write(f"**Updated:** {matrix['updated_at']}")
+                            st.write(f"**Created By:** {matrix['created_by']}")
+                        with col_delete:
+                            if st.button("🗑️ Delete", key=f"delete_{matrix['matrix_id']}", use_container_width=True):
+                                with st.spinner("Deleting..."):
+                                    success, message = delete_from_snowflake(matrix['matrix_id'])
+                                    if success:
+                                        st.success(message)
+                                        st.rerun()
+                                    else:
+                                        st.error(message)
     
     # Legend
     st.divider()

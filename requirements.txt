@@ -3,4 +3,6 @@ pandas>=2.0.0
 numpy>=1.24.0
 openpyxl>=3.1.0
 python-pptx>=0.6.21
+snowflake-connector-python>=3.0.0
+snowflake-sqlalchemy>=1.4.0
 
