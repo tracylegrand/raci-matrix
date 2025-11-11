@@ -5,4 +5,5 @@ openpyxl>=3.1.0
 python-pptx>=0.6.21
 snowflake-connector-python>=3.0.0
 snowflake-sqlalchemy>=1.4.0
+cryptography>=41.0.0
 

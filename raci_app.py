@@ -526,38 +526,73 @@ def export_to_powerpoint(df, filename='raci_matrix.pptx'):
 # ============================================================================
 
 def get_snowflake_connection():
-    """Get Snowflake connection using Streamlit secrets"""
+    """Get Snowflake connection using Streamlit secrets (supports password or key pair auth)"""
     try:
         import snowflake.connector
+        from cryptography.hazmat.primitives import serialization
         
         # Get credentials from Streamlit secrets
-        # Expected structure in .streamlit/secrets.toml:
-        # [snowflake]
-        # account = "your_account"
-        # user = "your_username"
-        # password = "your_password"
-        # warehouse = "your_warehouse"
-        # database = "your_database"
-        # schema = "your_schema"
-        # role = "your_role"  # optional
-        
+        # Supports both password and key pair authentication
         if 'snowflake' not in st.secrets:
             return None, "Snowflake credentials not found in Streamlit secrets. Please configure secrets.toml"
         
         snowflake_config = st.secrets['snowflake']
         
-        conn = snowflake.connector.connect(
-            account=snowflake_config['account'],
-            user=snowflake_config['user'],
-            password=snowflake_config['password'],
-            warehouse=snowflake_config.get('warehouse', ''),
-            database=snowflake_config.get('database', ''),
-            schema=snowflake_config.get('schema', ''),
-            role=snowflake_config.get('role', '')
-        )
+        # Build connection parameters
+        conn_params = {
+            'account': snowflake_config['account'],
+            'user': snowflake_config['user'],
+            'warehouse': snowflake_config.get('warehouse', ''),
+            'database': snowflake_config.get('database', ''),
+            'schema': snowflake_config.get('schema', ''),
+            'role': snowflake_config.get('role', '')
+        }
+        
+        # Check for key pair authentication (preferred)
+        if 'private_key' in snowflake_config or 'private_key_path' in snowflake_config:
+            # Key pair authentication
+            private_key = None
+            
+            if 'private_key_path' in snowflake_config:
+                # Read private key from file
+                with open(snowflake_config['private_key_path'], 'rb') as key_file:
+                    private_key = serialization.load_pem_private_key(
+                        key_file.read(),
+                        password=None,
+                    )
+            elif 'private_key' in snowflake_config:
+                # Read private key from string content
+                private_key_content = snowflake_config['private_key']
+                # Handle multi-line strings with triple quotes
+                if isinstance(private_key_content, str):
+                    private_key = serialization.load_pem_private_key(
+                        private_key_content.encode('utf-8'),
+                        password=None,
+                    )
+            
+            if private_key:
+                # Convert to PEM format for Snowflake connector
+                pkb = private_key.private_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PrivateFormat.PKCS8,
+                    encryption_algorithm=serialization.NoEncryption()
+                )
+                conn_params['private_key'] = pkb
+            else:
+                return None, "Failed to load private key for key pair authentication"
+        elif 'password' in snowflake_config:
+            # Password authentication (fallback)
+            conn_params['password'] = snowflake_config['password']
+        else:
+            return None, "Either 'password' or 'private_key'/'private_key_path' must be provided in Snowflake secrets"
+        
+        conn = snowflake.connector.connect(**conn_params)
         
         return conn, None
-    except ImportError:
+    except ImportError as e:
+        missing_module = str(e)
+        if 'cryptography' in missing_module:
+            return None, "cryptography package required for key pair auth. Install: pip install cryptography"
         return None, "snowflake-connector-python not installed. Please install it: pip install snowflake-connector-python"
     except Exception as e:
         return None, f"Error connecting to Snowflake: {str(e)}"
